@@ -9,18 +9,18 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // 1. Fetch game details using RoProxy (Public Roblox API Proxy)
-        const robloxRes = await axios.get(`https://apis.roproxy.com/universes/v1/places/${placeId}/universe-details`, {
+        // 1. Fetch place details using RoProxy's multiget-place-details
+        const robloxRes = await axios.get(`https://games.roproxy.com/v1/games/multiget-place-details?placeIds=${placeId}`, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
 
-        if (!robloxRes.data || !robloxRes.data.name) {
-            return res.status(404).json({ success: false, message: "Game details not found" });
+        if (!robloxRes.data || robloxRes.data.length === 0 || !robloxRes.data[0].name) {
+            return res.status(404).json({ success: false, message: "Game details not found for this Place ID" });
         }
 
-        const rawName = robloxRes.data.name;
+        const rawName = robloxRes.data[0].name;
 
         // Clean game title: Removes tags like [UPDATE 20] or (NEW!)
         const cleanName = rawName
@@ -30,7 +30,7 @@ module.exports = async (req, res) => {
 
         const slug = cleanName.toLowerCase().replace(/\s+/g, "-");
 
-        // 2. Scrape codes site
+        // 2. Scrape codes website
         const searchUrl = `https://progameguides.com/roblox/${slug}-codes/`;
         let activeCodes = [];
 
