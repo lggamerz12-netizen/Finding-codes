@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
 
         const rawName = robloxRes.data[0].name;
 
-        // Clean up title: Removes tags like [UPDATE 20], (NEW!), and special characters
+        // Clean up title (removes tags like [UPDATE 20] or (NEW))
         const cleanName = rawName
             .replace(/\[.*?\]|\(.*?\)/g, "")
             .replace(/[^a-zA-Z0-9 ]/g, "")
@@ -30,7 +30,7 @@ module.exports = async (req, res) => {
 
         const slug = cleanName.toLowerCase().replace(/\s+/g, "-");
 
-        // 2. Scrape codes site with full browser headers
+        // 2. Scrape codes website
         const searchUrl = `https://progameguides.com/roblox/${slug}-codes/`;
         let activeCodes = [];
 
@@ -61,7 +61,7 @@ module.exports = async (req, res) => {
                 }
             });
         } catch (scrapeErr) {
-            // Catches missing code pages or block responses gracefully
+            // Ignore scraping errors gracefully
         }
 
         return res.status(200).json({
