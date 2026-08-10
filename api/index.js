@@ -9,28 +9,35 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // 1. Fetch place details using RoProxy's multiget-place-details
-        const robloxRes = await axios.get(`https://games.roproxy.com/v1/games/multiget-place-details?placeIds=${placeId}`, {
+        // 1. Fetch the Roblox Game Page directly
+        const robloxPage = await axios.get(`https://www.roblox.com/games/${placeId}/`, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9'
+            },
+            maxRedirects: 5,
+            timeout: 6000
         });
 
-        if (!robloxRes.data || robloxRes.data.length === 0 || !robloxRes.data[0].name) {
-            return res.status(404).json({ success: false, message: "Game details not found for this Place ID" });
+        const $roblox = cheerio.load(robloxPage.data);
+        
+        // Extract game title from OpenGraph metadata or page title
+        let rawName = $roblox('meta[property="og:title"]').attr('content') || $roblox('title').text();
+
+        if (!rawName) {
+            return res.status(404).json({ success: false, message: "Could not identify Roblox game title." });
         }
 
-        const rawName = robloxRes.data[0].name;
-
-        // Clean game title: Removes tags like [UPDATE 20] or (NEW!)
-        const cleanName = rawName
+        // Clean game title: removes "- Roblox", [UPDATE 20], (NEW!), and special characters
+        let cleanName = rawName
+            .replace(/- Roblox/i, "")
             .replace(/\[.*?\]|\(.*?\)/g, "")
             .replace(/[^a-zA-Z0-9 ]/g, "")
             .trim();
 
         const slug = cleanName.toLowerCase().replace(/\s+/g, "-");
 
-        // 2. Scrape codes website
+        // 2. Scrape Pro Game Guides for Codes
         const searchUrl = `https://progameguides.com/roblox/${slug}-codes/`;
         let activeCodes = [];
 
@@ -43,10 +50,10 @@ module.exports = async (req, res) => {
                 timeout: 5000
             });
 
-            const $ = cheerio.load(pageHtml.data);
+            const $codes = cheerio.load(pageHtml.data);
 
-            $('ul li').each((i, el) => {
-                const text = $(el).text();
+            $codes('ul li').each((i, el) => {
+                const text = $codes(el).text();
                 if (text.includes("–") || text.includes("-")) {
                     const parts = text.split(/–|-/);
                     if (parts[0] && parts[1]) {
@@ -59,7 +66,7 @@ module.exports = async (req, res) => {
                 }
             });
         } catch (scrapeErr) {
-            // Catches missing code pages gracefully
+            // Gracefully handles games without dedicated code pages
         }
 
         return res.status(200).json({
@@ -71,7 +78,7 @@ module.exports = async (req, res) => {
     } catch (err) {
         return res.status(500).json({
             success: false,
-            message: "Failed to fetch Roblox game info",
+            message: "Failed to load Roblox game page",
             error: err.message
         });
     }
