@@ -9,20 +9,20 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // 1. Fetch game details using Roblox's official Games API
-        const robloxRes = await axios.get(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`, {
+        // 1. Fetch game details using RoProxy (Public Roblox API Proxy)
+        const robloxRes = await axios.get(`https://apis.roproxy.com/universes/v1/places/${placeId}/universe-details`, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
 
-        if (!robloxRes.data || robloxRes.data.length === 0 || !robloxRes.data[0].name) {
-            return res.status(404).json({ success: false, message: "Game not found for this PlaceId" });
+        if (!robloxRes.data || !robloxRes.data.name) {
+            return res.status(404).json({ success: false, message: "Game details not found" });
         }
 
-        const rawName = robloxRes.data[0].name;
+        const rawName = robloxRes.data.name;
 
-        // Clean up title (removes tags like [UPDATE 20] or (NEW))
+        // Clean game title: Removes tags like [UPDATE 20] or (NEW!)
         const cleanName = rawName
             .replace(/\[.*?\]|\(.*?\)/g, "")
             .replace(/[^a-zA-Z0-9 ]/g, "")
@@ -30,7 +30,7 @@ module.exports = async (req, res) => {
 
         const slug = cleanName.toLowerCase().replace(/\s+/g, "-");
 
-        // 2. Scrape codes website
+        // 2. Scrape codes site
         const searchUrl = `https://progameguides.com/roblox/${slug}-codes/`;
         let activeCodes = [];
 
@@ -38,15 +38,13 @@ module.exports = async (req, res) => {
             const pageHtml = await axios.get(searchUrl, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5'
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
                 },
-                timeout: 6000
+                timeout: 5000
             });
 
             const $ = cheerio.load(pageHtml.data);
 
-            // 3. Extract items from active codes list
             $('ul li').each((i, el) => {
                 const text = $(el).text();
                 if (text.includes("–") || text.includes("-")) {
@@ -61,7 +59,7 @@ module.exports = async (req, res) => {
                 }
             });
         } catch (scrapeErr) {
-            // Ignore scraping errors gracefully
+            // Catches missing code pages gracefully
         }
 
         return res.status(200).json({
@@ -73,7 +71,7 @@ module.exports = async (req, res) => {
     } catch (err) {
         return res.status(500).json({
             success: false,
-            message: "Error processing request",
+            message: "Failed to fetch Roblox game info",
             error: err.message
         });
     }
