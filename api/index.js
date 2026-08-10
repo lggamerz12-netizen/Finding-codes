@@ -1,6 +1,46 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+// Helper to make fast HTTP requests with standard headers
+async function fetchHtml(url) {
+    try {
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
+            timeout: 4000
+        });
+        return response.data;
+    } catch (err) {
+        return null;
+    }
+}
+
+// Helper to extract code-like patterns (CODE - REWARD)
+function parseCodesFromHtml(html) {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const extracted = [];
+
+    $('ul li, table tr, p, td').each((i, el) => {
+        const text = $(el).text().trim();
+        if ((text.includes("–") || text.includes("-") || text.includes(":")) && !text.toLowerCase().includes("expired")) {
+            const parts = text.split(/–|-|:/);
+            if (parts[0] && parts[1]) {
+                const code = parts[0].replace(/[^a-zA-Z0-9_]/g, "").trim();
+                const reward = parts[1].trim();
+
+                if (code.length >= 3 && code.length <= 32 && !extracted.some(item => item.code === code)) {
+                    extracted.push({ code, reward: reward || "Active Reward" });
+                }
+            }
+        }
+    });
+
+    return extracted;
+}
+
 module.exports = async (req, res) => {
     const placeId = req.query.placeId;
 
@@ -9,23 +49,20 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // 1. Fetch the Roblox Game Page to get the real title
-        const robloxPage = await axios.get(`https://www.roblox.com/games/${placeId}/`, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            },
-            timeout: 6000
-        });
+        // 1. Get Game Title from Roblox
+        const robloxHtml = await fetchHtml(`https://www.roblox.com/games/${placeId}/`);
+        if (!robloxHtml) {
+            return res.status(404).json({ success: false, message: "Could not access Roblox game page." });
+        }
 
-        const $roblox = cheerio.load(robloxPage.data);
+        const $roblox = cheerio.load(robloxHtml);
         let rawName = $roblox('meta[property="og:title"]').attr('content') || $roblox('title').text();
 
         if (!rawName) {
             return res.status(404).json({ success: false, message: "Could not identify Roblox game title." });
         }
 
-        // Clean game title
-        let cleanName = rawName
+        const cleanName = rawName
             .replace(/- Roblox/i, "")
             .replace(/\[.*?\]|\(.*?\)/g, "")
             .replace(/[^a-zA-Z0-9 ]/g, "")
@@ -33,72 +70,33 @@ module.exports = async (req, res) => {
 
         const slug = cleanName.toLowerCase().replace(/\s+/g, "-");
 
+        // 2. Sources configuration list
+        const sources = [
+            `https://progameguides.com/roblox/${slug}-codes/`,
+            `https://www.vg247.com/${slug}-codes`,
+            `https://robloxden.com/codes/${slug}`,
+            `https://rocodes.com/codes/${slug}`,
+            `https://beebom.com/roblox-${slug}-codes/`,
+            `https://thespike.gg/roblox/${slug}-codes`
+        ];
+
         let activeCodes = [];
 
-        // 2. Strategy A: Try ProGameGuides with expanded selectors
-        try {
-            const pggUrl = `https://progameguides.com/roblox/${slug}-codes/`;
-            const pggRes = await axios.get(pggUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-                timeout: 5000
-            });
+        // 3. Try each source sequentially until codes are found
+        for (const url of sources) {
+            const html = await fetchHtml(url);
+            const codesFound = parseCodesFromHtml(html);
 
-            const $pgg = cheerio.load(pggRes.data);
-
-            // Scrape list items, strong tags, and paragraph codes
-            $pgg('ul li, p, td').each((i, el) => {
-                const text = $pgg(el).text().trim();
-                
-                // Matches patterns like: CODE - Reward OR CODE – Reward
-                if ((text.includes("–") || text.includes("-")) && !text.toLowerCase().includes("expired")) {
-                    const parts = text.split(/–|-/);
-                    if (parts[0] && parts[1]) {
-                        const code = parts[0].replace(/[^a-zA-Z0-9_]/g, "").trim();
-                        const reward = parts[1].trim();
-
-                        // Validate reasonable code length
-                        if (code.length >= 3 && code.length <= 30 && !activeCodes.some(c => c.code === code)) {
-                            activeCodes.push({ code, reward: reward || "Active Reward" });
-                        }
-                    }
-                }
-            });
-        } catch (err) {
-            // ProGameGuides failed or 404'd
-        }
-
-        // 3. Strategy B: Fallback to VG247 if ProGameGuides yielded no codes
-        if (activeCodes.length === 0) {
-            try {
-                const vgUrl = `https://www.vg247.com/${slug}-codes`;
-                const vgRes = await axios.get(vgUrl, {
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-                    timeout: 5000
-                });
-
-                const $vg = cheerio.load(vgRes.data);
-                $vg('ul li').each((i, el) => {
-                    const text = $vg(el).text().trim();
-                    if (text.includes(":") || text.includes("-")) {
-                        const parts = text.split(/:|-/);
-                        if (parts[0] && parts[1]) {
-                            const code = parts[0].replace(/[^a-zA-Z0-9_]/g, "").trim();
-                            const reward = parts[1].trim();
-                            if (code.length >= 3 && code.length <= 30 && !activeCodes.some(c => c.code === code)) {
-                                activeCodes.push({ code, reward });
-                            }
-                        }
-                    }
-                });
-            } catch (err) {
-                // Fallback failed quietly
+            if (codesFound.length > 0) {
+                activeCodes = codesFound;
+                break; // Stop checking as soon as a source returns valid codes
             }
         }
 
         return res.status(200).json({
             success: true,
             game: cleanName,
-            codes: activeCodes.length > 0 ? activeCodes : [{ code: "NO_CODES_FOUND", reward: "No active codes currently listed" }]
+            codes: activeCodes.length > 0 ? activeCodes : [{ code: "NO_CODES_FOUND", reward: "No active codes found on supported sites" }]
         });
 
     } catch (err) {
